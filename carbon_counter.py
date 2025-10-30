@@ -4,6 +4,9 @@ import datetime
 import json
 import os
 
+BASE_DIR = os.path.dirname(__file__) if '__file__' in globals() else os.getcwd()
+DATA_FILE = os.path.join(BASE_DIR, 'data.json')
+
 ACTIVITY_DATA = {
     "Transportation": {
         "unit": "kg CO₂ per mile",
@@ -64,25 +67,77 @@ ACTIVITY_DATA = {
         "formula": "CO₂ = hours_or_actions × emission factor"
     }
 }
-
-def load_data(filename='data.json'):
-    try:
-        if os.path.exists(filename):
+def check_onboarding_status(filename='user_state.json'):
+    """Returns True if onboarding is done, False otherwise."""
+    if os.path.exists(filename):
+        try:
             with open(filename, 'r') as f:
-                return json.load(f)
-        else:
-            return {"activities": []}
-    except (json.JSONDecodeError, FileNotFoundError) as e:
-        print(f"Error loading data: {e}")
-        return {"activities": []}
+                state = json.load(f)
+            return state.get("onboarding_done", False)
+        except Exception:
+            return False
+    return False
 
-def save_data(data, filename='data.json'):
+def set_onboarding_done(filename='user_state.json'):
+    """Marks onboarding as completed in a persistent file."""
     try:
         with open(filename, 'w') as f:
+            json.dump({"onboarding_done": True}, f)
+    except Exception as e:
+        print(f"Error saving onboarding state: {e}")
+
+
+def load_data(filename=None):
+    if filename is None:
+        filename = DATA_FILE
+
+    try:
+        if os.path.exists(filename):
+            with open(filename, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if "activities" not in data:
+                data["activities"] = []
+            if "onboarding_done" not in data:
+                data["onboarding_done"] = False
+            return data
+        else:
+            dirpath = os.path.dirname(filename)
+            if dirpath:
+                os.makedirs(dirpath, exist_ok=True)
+            return {"activities": [], "onboarding_done": False}
+    except (json.JSONDecodeError, FileNotFoundError) as e:
+        print(f"Error loading data ({filename}): {e}")
+        return {"activities": [], "onboarding_done": False}
+
+
+def save_data(data, filename=None):
+    if filename is None:
+        filename = DATA_FILE
+
+    try:
+        if "activities" not in data:
+            data["activities"] = []
+        if "onboarding_done" not in data:
+            data["onboarding_done"] = False
+
+        tmpfile = filename + ".tmp"
+        dirpath = os.path.dirname(filename)
+        if dirpath:
+            os.makedirs(dirpath, exist_ok=True)
+
+        with open(tmpfile, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmpfile, filename)
         return True
     except Exception as e:
-        print(f"Error saving data: {e}")
+        print(f"Error saving data ({filename}): {e}")
+        try:
+            if os.path.exists(tmpfile):
+                os.remove(tmpfile)
+        except Exception:
+            pass
         return False
 
 def format_number(num):
@@ -264,9 +319,13 @@ def create_main_layout():
     st.set_page_config(page_title="Carbon Counter", layout="wide")
     st.title("🌱 Carbon Counter")
 
-    if not st.session_state.get("onboarding_done", False):
+    data = load_data()
+
+    if not st.session_state.get("onboarding_done", False) and not data.get("onboarding_done", False):
         create_onboarding()
         return
+    else:
+        st.session_state.onboarding_done = True
 
     sidebar_options = [
         "Track Activity",
@@ -361,29 +420,29 @@ def create_onboarding():
             default_vehicle = (
                 vehicle_options.index(st.session_state.onboarding["vehicle_type"]) if st.session_state.onboarding["vehicle_type"] in vehicle_options else 0
             )
-            vehicle = st.selectbox("What type of vehicle did you use?", vehicle_options, index=default_vehicle)
+            vehicle = st.selectbox("What type of vehicle did you use?", vehicle_options, index=default_vehicle, key="onboarding_vehicle_type")
             st.session_state.onboarding["vehicle_type"] = vehicle
 
-            miles = st.number_input(
+            st.number_input(
                 "How many miles did you travel today?",
                 min_value=0.0,
                 step=1.0,
-                value=float(st.session_state.onboarding["miles"] or 0.0),
+                key="onboarding_miles",
             )
-            st.session_state.onboarding["miles"] = miles
+            st.session_state.onboarding["miles"] = float(st.session_state.get("onboarding_miles", 0.0) or 0.0)
 
         nav_row(show_back=False)
 
 
     elif page == 2:
         st.subheader("Page 2: Home Energy")
-        hours = st.number_input(
+        st.number_input(
             "How many hours have the lights been on in your home today?",
             min_value=0.0,
             step=0.5,
-            value=float(st.session_state.onboarding["lights_hours"] or 0.0),
+            key="onboarding_lights_hours",
         )
-        st.session_state.onboarding["lights_hours"] = hours
+        st.session_state.onboarding["lights_hours"] = float(st.session_state.get("onboarding_lights_hours", 0.0) or 0.0)
 
         nav_row()
 
@@ -393,11 +452,16 @@ def create_onboarding():
         meals = st.session_state.onboarding["meals"]
         c1, c2 = st.columns(2)
         with c1:
-            meals["Heavy meat meal"] = st.number_input("Heavy meat meal (count)", min_value=0, step=1, value=int(meals.get("Heavy meat meal", 0)))
-            meals["Vegetarian meal"] = st.number_input("Vegetarian meal (count)", min_value=0, step=1, value=int(meals.get("Vegetarian meal", 0)))
+            st.number_input("Heavy meat meal (count)", min_value=0, step=1, key="onboarding_meal_heavy")
+            st.number_input("Vegetarian meal (count)", min_value=0, step=1, key="onboarding_meal_veg")
         with c2:
-            meals["Moderate meat meal"] = st.number_input("Moderate meat meal (count)", min_value=0, step=1, value=int(meals.get("Moderate meat meal", 0)))
-            meals["Vegan meal"] = st.number_input("Vegan meal (count)", min_value=0, step=1, value=int(meals.get("Vegan meal", 0)))
+            st.number_input("Moderate meat meal (count)", min_value=0, step=1, key="onboarding_meal_moderate")
+            st.number_input("Vegan meal (count)", min_value=0, step=1, key="onboarding_meal_vegan")
+
+        meals["Heavy meat meal"] = int(st.session_state.get("onboarding_meal_heavy", meals.get("Heavy meat meal", 0)) or 0)
+        meals["Vegetarian meal"] = int(st.session_state.get("onboarding_meal_veg", meals.get("Vegetarian meal", 0)) or 0)
+        meals["Moderate meat meal"] = int(st.session_state.get("onboarding_meal_moderate", meals.get("Moderate meat meal", 0)) or 0)
+        meals["Vegan meal"] = int(st.session_state.get("onboarding_meal_vegan", meals.get("Vegan meal", 0)) or 0)
         st.session_state.onboarding["meals"] = meals
 
         nav_row()
@@ -427,34 +491,58 @@ def create_onboarding():
 
         total = format_number(transport_emissions + home_emissions + food_emissions)
 
+        total = format_number(transport_emissions + home_emissions + food_emissions)
+
+        context_text = ""
+        if total < 1:
+            context_text = "That's about the same as charging your phone 120 times!"
+        elif total < 5:
+            context_text = "That's about the same as charging your phone over 200 times!"
+        elif total < 10:
+            context_text = "That’s about the the same as watching 15 hours of HD video streaming."
+        elif total < 20:
+            context_text = "That’s over 3× the weight of a newborn baby — in carbon!"
+        elif total < 50:
+            context_text = "That’s about the same emissions as a short domestic flight."
+        else:
+            context_text = "That’s roughly equivalent to driving a car for over 100 miles!"
+
         st.markdown(f"### <span style='color:red'>Total: {total} kg CO₂</span>", unsafe_allow_html=True)
+        st.caption(context_text)
+
         st.write("")
-        st.write("This is probably more than you expected! Now that you know your daily carbon footprint, use our website to discover ways to reduce it and make a positive impact.")
+        st.write("Now that you know your daily carbon footprint, use our website to discover ways to reduce it and make a positive impact.")
 
 
         if st.button("OK"):
-
             try:
-      
                 if onboarding.get("traveled_today") == "Yes" and onboarding.get("vehicle_type") and float(onboarding.get("miles", 0) or 0) > 0:
                     add_activity("Transportation", onboarding["vehicle_type"], float(onboarding["miles"]))
 
-           
                 if float(onboarding.get("lights_hours", 0) or 0) > 0:
                     add_activity("Home Energy", "Lighting", float(onboarding["lights_hours"]))
 
-             
                 for meal_type, count in (onboarding.get("meals", {}) or {}).items():
                     count_int = int(count or 0)
                     if count_int > 0:
                         add_activity("Food & Diet", meal_type, count_int)
-            except Exception:
-                pass
 
-       
-            st.session_state.onboarding_done = True
-            st.session_state.nav = "Track Activity"
-            st.rerun()
+                data = load_data()
+                data["onboarding_done"] = True
+                ok = save_data(data)
+
+                if ok:
+                    saved = load_data()
+                else:
+                    st.error("Failed to save onboarding state to disk.")
+
+                st.session_state.onboarding_done = True
+                st.session_state.nav = "Track Activity"
+
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Error saving onboarding data: {e}")
 
 def create_activity_form():
     import streamlit as st
