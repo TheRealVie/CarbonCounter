@@ -74,3 +74,5 @@ streamlit run CarbonCounter/carbon_counter.py
   ```powershell
   pip freeze > requirements.txt
   ```
+## Final Note
+   Our calculations will not be exact as there are many factors contributing to carbon emissions, however our calculations are based off reasonable estimates from the US Department of Environmental Protection.
